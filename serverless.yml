@@ -1,0 +1,68 @@
+service: store
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+
+functions:
+  getAllProducts:
+    handler: handler.graphql
+    events:
+      - http:
+          path: graphql
+          method: POST
+  getStock:
+    handler: handler.getStock
+  orderStock:
+    handler: handler.orderStock
+  dispatchOrder:
+    handler: handler.dispatchOrder
+
+stepFunctions:
+  stateMachines:
+    purchase:
+      events:
+        - http:
+            path: purchase
+            method: POST
+      name: purchase-${opt:stage}
+      definition:
+        StartAt: ParseOrder
+        States:
+          ParseOrder: 
+            Type: Pass
+            OutputPath: $.body
+            Next: ProcessOrder
+          ProcessOrder:
+            Type: Parallel
+            End: true
+            Branches:
+              - StartAt: CheckStock
+                States:
+                  CheckStock:
+                    Type: Task
+                    Resource: arn:aws:lambda:#{AWS::Region}:#{AWS::AccountId}:function:${self:service}-${opt:stage}-getStock
+                    Next: IsReorderRequired
+                  IsReorderRequired:
+                    Type: Choice
+                    Choices:
+                      - Variable: "$.quantity"
+                        NumericLessThan: 5
+                        Next: StockRequired
+                    Default: NoStockRequired
+                  StockRequired:
+                    Type: Task
+                    Resource: arn:aws:lambda:#{AWS::Region}:#{AWS::AccountId}:function:${self:service}-${opt:stage}-orderStock
+                    End: true
+                  NoStockRequired:
+                    Type: Succeed
+              - StartAt: DispatchOrder
+                States:
+                  DispatchOrder:
+                    Type: Task
+                    Resource: arn:aws:lambda:#{AWS::Region}:#{AWS::AccountId}:function:${self:service}-${opt:stage}-dispatchOrder
+                    End: true
+
+plugins:
+  - serverless-step-functions
+  - serverless-pseudo-parameters
